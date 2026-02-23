@@ -3,7 +3,7 @@ const crypto = require("crypto");
 
 const ACCESS_TOKEN_EXPIRY = "15m";
 const REFRESH_TOKEN_EXPIRY_DAYS = 30;
-
+const PASSWORD_RESET_EXPIRY_MINUTES = 15;
 
 // Generate access token (JWT)
 function generateAccessToken(user){
@@ -45,10 +45,33 @@ function getRefreshTokenExpiry(){
     return date;
 }
 
+//
+
+function getPasswordResetExpiry(){
+    const date = new Date();
+    date.setMinutes(date.getMinutes() + PASSWORD_RESET_EXPIRY_MINUTES);
+    return date;
+}
+
+
+// Generate password reset token
+function generatePasswordResetToken(){
+    return crypto.randomBytes(32).toString("hex");
+}
+
+//expiry = 15 minutes
+function getPasswordResetExpiry(){
+    const date = new Date();
+    date.setMinutes(date.getMinutes() + 15);
+    return date;
+}
+
 module.exports = {
     generateAccessToken,
     generateRefreshToken,
+    generatePasswordResetToken,
     hashToken,
-    getRefreshTokenExpiry
+    getRefreshTokenExpiry,
+    getPasswordResetExpiry
 };
 
