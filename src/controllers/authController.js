@@ -1,17 +1,169 @@
 const User = require("../models/User");
 const bcrypt = require("bcrypt");
 const RefreshToken  = require("../models/RefreshToken");
-
+const PasswordResetToken = require("../models/PasswordResetToken");
 
 
 
 const {
     generateAccessToken,
+     generatePasswordResetToken,
     generateRefreshToken,
     hashToken,
-    getRefreshTokenExpiry
+    getRefreshTokenExpiry,
+    getPasswordResetExpiry
 } = require("../services/tokenService");
 
+
+//Forget password
+exports.forgotPassword = async (req, res) =>{
+    try{
+
+        const {email} = req.body;
+
+        if(!email || typeof email !== "string"){
+            return res.status(400).json({
+                 message: "Valid email required"
+            })
+        }
+
+         const normalizedEmail = email.toLowerCase().trim();
+
+        const user = await User.findOne({
+            email: normalizedEmail
+        });
+
+         // IMPORTANT: do NOT reveal whether user exists
+        if (!user) {
+            return res.json({
+                message: "If account exists, password reset link sent"
+            });
+        }
+
+
+         // delete any existing reset tokens
+        await PasswordResetToken.deleteMany({
+            user: user._id
+    });
+
+     // generate raw token
+        const resetToken = generatePasswordResetToken();
+
+        // hash token
+        const tokenHash = hashToken(resetToken);
+
+        // store hash in DB
+        await PasswordResetToken.create({
+            user: user._id,
+            token_hash: tokenHash,
+            expires_at: getPasswordResetExpiry()
+        });
+      // TEMPORARY: return token (email integration later)
+        res.json({
+            message: "Password reset token generated",
+            resetToken: resetToken
+        });
+}  catch(error){
+    console.error("Forgot password error:", error);
+
+        res.status(500).json({
+            message: "Internal server error"
+        });
+
+    }
+};
+
+//Reset password
+// Reset password
+exports.resetPassword = async (req, res) => {
+    try {
+
+        const { token, newPassword } = req.body;
+
+        if (!token || typeof token !== "string") {
+            return res.status(400).json({
+                message: "Reset token required"
+            });
+        }
+
+        if (!newPassword || typeof newPassword !== "string") {
+            return res.status(400).json({
+                message: "New password required"
+            });
+        }
+
+        // hash incoming token
+        const tokenHash = hashToken(token);
+
+        // find stored reset token
+        const storedToken = await PasswordResetToken.findOne({
+            token_hash: tokenHash
+        }).populate("user");
+
+        if (!storedToken) {
+            return res.status(403).json({
+                message: "Invalid or already used reset token"
+            });
+        }
+
+        // check expiry
+        if (storedToken.expires_at < new Date()) {
+
+            await PasswordResetToken.deleteOne({
+                _id: storedToken._id
+            });
+
+            return res.status(403).json({
+                message: "Reset token expired"
+            });
+        }
+
+        const user = storedToken.user;
+
+        if (!user) {
+
+            await PasswordResetToken.deleteOne({
+                _id: storedToken._id
+            });
+
+            return res.status(403).json({
+                message: "User no longer exists"
+            });
+        }
+
+        // update password
+        user.password_hash = newPassword;
+
+        // CRITICAL: revoke all refresh tokens
+        user.auth_version += 1;
+
+        await user.save();
+
+        // delete reset token (one-time use)
+        await PasswordResetToken.deleteOne({
+            _id: storedToken._id
+        });
+
+        // delete all refresh tokens (forces logout everywhere)
+        await RefreshToken.deleteMany({
+            user: user._id
+        });
+
+        res.json({
+            message: "Password reset successful"
+        });
+
+    }
+    catch (error) {
+
+        console.error("Reset password error:", error);
+
+        res.status(500).json({
+            message: "Internal server error"
+        });
+
+    }
+};
 exports.logout = async (req, res )=>{
     try{
         const refreshToken = req.cookies.refresh_token;
