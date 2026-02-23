@@ -12,6 +12,121 @@ const {
     getRefreshTokenExpiry
 } = require("../services/tokenService");
 
+exports.logout = async (req, res )=>{
+    try{
+        const refreshToken = req.cookies.refresh_token;
+        if(refreshToken){
+
+            const tokenHash = hashToken(refreshToken);
+
+            await RefreshToken.deleteOne({
+                token_hash: tokenHash
+            });
+        }
+
+        res.clearCookie("refresh_token", {
+            httpOnly: true,
+            secure: false, // true in production
+            sameSite: "strict",
+            path: "/api/auth/refresh"
+        });
+
+        res.json({
+            message: "Logged out succesfully"
+        });
+    }
+    catch(error){
+        console.log("Logout error:", error);
+
+        res.status(500).json({
+            message: "Internal server error"
+        });
+    }
+};
+//refresh token validation 
+exports.refresh = async (req, res) =>{
+    try{
+        const refreshToken = req.cookies.refresh_token;
+        
+        if(!refreshToken){
+            return res.status(401).json({
+                message:"Refresh token missing"
+            });
+        }
+
+        const tokenHash = hashToken(refreshToken);
+
+        const storedToken = await RefreshToken.findOne({
+            token_hash: tokenHash
+        }).populate("user");
+
+
+        //Step 1.  Reuse Detection
+        if(!storedToken){
+            return res.status(403).json({
+                message: "Invalid refresh token (possible reuse detected)"
+            });
+        }
+
+        // Step2. Check expiry
+        if(storedToken.expires_at  < new Date()) {
+            await RefreshToken.deleteOne({ _id: storedToken._id});
+
+            return res.status(403).json({
+                message:"Refresh token expired"
+            });
+        }
+
+        if (!storedToken.user) {
+    await RefreshToken.deleteOne({ _id: storedToken._id });
+
+    return res.status(403).json({
+        message: "User no longer exists"
+    });
+}
+         // Step.4 Safe to proceed
+        const user = storedToken.user;
+
+        //ROTATION -- delte old token
+        await RefreshToken.deleteOne({
+            _id: storedToken._id
+        });
+
+        // generate new tokens
+
+        const newAccessToken = generateAccessToken(user);
+
+        const newRefreshToken = generateRefreshToken();
+
+        const newRefreshTokenHash = hashToken(newRefreshToken);
+
+
+        await RefreshToken.create({
+            user: user._id,
+            token_hash: newRefreshTokenHash,
+            expires_at: getRefreshTokenExpiry()
+        });
+
+        res.cookie("refresh_token", newRefreshToken, {
+            httpOnly: true,
+            secure: false, //dev only
+            sameSite: "strict",
+            path: "/api/auth/refresh",
+            maxAge: 30 * 24 * 60 * 60 * 1000
+        });
+
+        res.json({
+            accessToken: newAccessToken
+        });
+    }
+
+    catch(error){
+        console.error("Refresh error:", error);
+        res.status(500).json({
+            message: "Internal server error"
+        });
+    }
+}
 
 exports.login = async (req, res) =>{
     try{
